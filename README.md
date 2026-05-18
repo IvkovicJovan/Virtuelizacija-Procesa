@@ -79,4 +79,3 @@ EegWcfSystem.sln
 | `ChannelMaxValue` | 10000 | Maksimalna vrednost EEG kanala |
 | `TimestampSkewMaxMs` | 2000 | Maksimalni dozvoljeni skew timestampa (CP2) |
 
- provere posle `ValidateSample` |
