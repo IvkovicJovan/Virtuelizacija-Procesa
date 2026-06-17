@@ -41,11 +41,15 @@
   <ItemGroup>
     <Compile Include="IO\EegCsvReader.cs" />
     <Compile Include="IO\RejectLogger.cs" />
+    <Compile Include="IO\SendTimeLogger.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
+    <Content Include="EEG\*.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\EegWcfSystem.Common\EegWcfSystem.Common.csproj">

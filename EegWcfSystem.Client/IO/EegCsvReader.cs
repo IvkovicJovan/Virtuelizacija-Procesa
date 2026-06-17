@@ -10,7 +10,7 @@ namespace EegWcfSystem.Client.IO
         private FileStream   _fs;
         private StreamReader _sr;
         private bool         _disposed;
-        private int          _rowIndex;
+        private int          _rowIndex = 1;
 
         private static readonly string[] ExpectedHeader = new[]
         {
@@ -91,7 +91,7 @@ namespace EegWcfSystem.Client.IO
             {
                 errorMessage = $"Broj kolona {c.Length} != {ExpectedHeader.Length}";
                 _rowIndex++;
-                return true;   // vraćamo true, ali sample je null
+                return true;   // vracamo true, ali sample je null
             }
 
             try

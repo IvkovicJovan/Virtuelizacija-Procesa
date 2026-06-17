@@ -1,55 +1,97 @@
 using System;
+using System.Globalization;
 using System.IO;
 using EegWcfSystem.Common.Contracts;
 
 namespace EegWcfSystem.Server.Storage
 {
-    // CP1: prazna implementacija (samo Dispose pattern radi).
-    // CP2 (Task 6): popunjava session.csv i rejects.csv u Data/<id>/<date>/.
+    // Zadatak 6: serversko skladištenje u Data/<ParticipantId>/<YYYY-MM-DD>/.
+    // Klasa namjerno implementira IDisposable jer drži FileStream/StreamWriter resurse.
     public class SessionWriter : IDisposable
     {
-        private FileStream   _fs;
-        private StreamWriter _sw;
-        private bool         _disposed;
+        private readonly FileStream _sessionStream;
+        private readonly StreamWriter _sessionWriter;
+        private readonly FileStream _rejectStream;
+        private readonly StreamWriter _rejectWriter;
+        private bool _disposed;
+
+        public string SessionPath { get; private set; }
+        public string RejectsPath { get; private set; }
 
         public SessionWriter(EegMeta meta)
         {
-            // CP2: otvori file stream ovde
-            // var dir = Path.Combine("Data",
-            //               meta.ParticipantId.ToString(),
-            //               DateTime.UtcNow.ToString("yyyy-MM-dd"));
-            // Directory.CreateDirectory(dir);
-            // _fs = new FileStream(Path.Combine(dir, "session.csv"),
-            //             FileMode.Create, FileAccess.Write, FileShare.Read);
-            // _sw = new StreamWriter(_fs);
-            // _sw.WriteLine("RowIndex,Timestamp,AF3,T7,Pz,T8,AF4," +
-            //               "Attention,Engagement,Excitement,Interest,Relaxation,Stress," +
-            //               "Battery,ContactQuality,SlideIndex,SetIndex");
+            if (meta == null) throw new ArgumentNullException(nameof(meta));
+
+            string dir = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "Data",
+                meta.ParticipantId.ToString(CultureInfo.InvariantCulture),
+                DateTime.Now.ToString("yyyy-MM-dd"));
+
+            Directory.CreateDirectory(dir);
+
+            SessionPath = Path.Combine(dir, "session.csv");
+            RejectsPath = Path.Combine(dir, "rejects.csv");
+
+            _sessionStream = new FileStream(SessionPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+            _sessionWriter = new StreamWriter(_sessionStream) { AutoFlush = true };
+            _sessionWriter.WriteLine("RowIndex,Timestamp,AF3,T7,Pz,T8,AF4,Attention,Engagement,Excitement,Interest,Relaxation,Stress,Battery,ContactQuality,SlideIndex,SetIndex");
+
+            _rejectStream = new FileStream(RejectsPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+            _rejectWriter = new StreamWriter(_rejectStream) { AutoFlush = true };
+            _rejectWriter.WriteLine("UtcTime,ParticipantId,RowIndex,Reason,RawLine");
         }
 
         public void AppendSample(EegSample s)
         {
-            // CP2:
-            // _sw.WriteLine(string.Join(",",
-            //     s.RowIndex,
-            //     s.Timestamp.ToString("dd/MM/yyyy HH:mm:ss"),
-            //     s.AF3.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.T7 .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.Pz .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.T8 .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.AF4.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.Attention  .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.Engagement .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.Excitement .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.Interest   .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.Relaxation .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.Stress     .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            //     s.Battery, s.ContactQuality, s.SlideIndex, s.SetIndex));
+            ThrowIfDisposed();
+            if (s == null) throw new ArgumentNullException(nameof(s));
+            _sessionWriter.WriteLine(ToCsvLine(s));
         }
 
-        public void AppendReject(string rawLine, string reason)
+        public void AppendReject(int participantId, int rowIndex, string reason, string rawLine)
         {
-            // CP2: pisanje u rejects.csv
+            ThrowIfDisposed();
+            string safeReason = Escape(reason);
+            string safeRaw = Escape(rawLine);
+            _rejectWriter.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "{0:o},{1},{2},\"{3}\",\"{4}\"",
+                DateTime.UtcNow, participantId, rowIndex, safeReason, safeRaw));
+        }
+
+        public static string ToCsvLine(EegSample s)
+        {
+            var ci = CultureInfo.InvariantCulture;
+            return string.Join(",", new[]
+            {
+                s.RowIndex.ToString(ci),
+                s.Timestamp.ToString("dd/MM/yyyy HH:mm:ss", ci),
+                s.AF3.ToString(ci),
+                s.T7.ToString(ci),
+                s.Pz.ToString(ci),
+                s.T8.ToString(ci),
+                s.AF4.ToString(ci),
+                s.Attention.ToString(ci),
+                s.Engagement.ToString(ci),
+                s.Excitement.ToString(ci),
+                s.Interest.ToString(ci),
+                s.Relaxation.ToString(ci),
+                s.Stress.ToString(ci),
+                s.Battery.ToString(ci),
+                s.ContactQuality.ToString(ci),
+                s.SlideIndex.ToString(ci),
+                s.SetIndex.ToString(ci)
+            });
+        }
+
+        private static string Escape(string value)
+        {
+            return (value ?? string.Empty).Replace("\"", "\"\"");
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(SessionWriter));
         }
 
         public void Dispose()
@@ -63,13 +105,19 @@ namespace EegWcfSystem.Server.Storage
             if (_disposed) return;
             if (disposing)
             {
-                _sw?.Flush();
-                _sw?.Dispose();
-                _fs?.Dispose();
+                _sessionWriter?.Flush();
+                _rejectWriter?.Flush();
+                _sessionWriter?.Dispose();
+                _rejectWriter?.Dispose();
+                _sessionStream?.Dispose();
+                _rejectStream?.Dispose();
             }
             _disposed = true;
         }
 
-        ~SessionWriter() { Dispose(false); }
+        ~SessionWriter()
+        {
+            Dispose(false);
+        }
     }
 }

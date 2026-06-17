@@ -1,81 +1,122 @@
-# EegWcfSystem — Kontrolna tačka 1
+# Virtuelizacija Procesa — EEG WCF projekat
 
-WCF sistema za prenos EEG podataka (klijent → server) putem `netTcpBinding` sa streaming-om.
+Projekat je usklađen sa PDF zadatkom **„Razmena i skladištenje EEG podataka iz CSV-a korišćenjem WCF servisa, fajl sistema i događajnog modela“**.
 
----
+## 1. Arhitektura
 
-## Arhitektura
-
-```
-┌─────────────────────────────┐                   ┌─────────────────────────────┐
-│        CLIENT (.exe)         │                   │        SERVER (.exe)         │
-│                              │                   │                              │
-│  EEG/ direktorijum           │                   │  ┌────────────────────────┐  │
-│   ├─ subject_1_results.csv   │   netTcpBinding   │  │ EegService             │  │
-│   ├─ subject_2_results.csv   │   (streaming)     │  │  StartSession(meta)    │  │
-│   └─ subject_N_results.csv   │  ◄──────────────► │  │  PushSample(sample)    │  │
-│                              │     ACK/NACK      │  │  EndSession()          │  │
-│  EegCsvReader (IDisposable)  │                   │  │                        │  │
-│   - parse invariant culture  │                   │  │  validacija +          │  │
-│   - red po red → PushSample  │                   │  │  Dispose pattern       │  │
-│                              │                   │  └───────────┬────────────┘  │
-│  RejectLogger (klijent log)  │                   │              │               │
-└─────────────────────────────┘                   │              ▼               │
-                                                   │  Data/<ParticipantId>/      │
-                                                   │       <YYYY-MM-DD>/         │
-                                                   │       session.csv  (CP2)    │
-                                                   │       rejects.csv  (CP2)    │
-                                                   └─────────────────────────────┘
+```text
+EEG CSV fajlovi
+      ↓
+EegWcfSystem.Client
+      ↓  StartSession(meta), PushSample(sample), EndSession()
+WCF netTcpBinding servis
+      ↓
+EegWcfSystem.Server
+      ↓
+Data/<ParticipantId>/<YYYY-MM-DD>/session.csv
+Data/<ParticipantId>/<YYYY-MM-DD>/rejects.csv
 ```
 
----
+Projekat ima tri dijela:
 
-## Protokol poruka
+- `EegWcfSystem.Common` — zajednički WCF ugovor, modeli i fault klase.
+- `EegWcfSystem.Client` — čita CSV fajlove, parsira redove i šalje ih serveru.
+- `EegWcfSystem.Server` — hostuje WCF servis, prima podatke, validira, upisuje i generiše događaje/warning-e.
 
-| Korak | Poruka | Sadržaj | Server odgovor |
-|-------|--------|---------|----------------|
-| 1 | `StartSession(EegMeta)` | ParticipantId, FileName, TotalRows, SchemaVersion | `Ack{ Status=IN_PROGRESS }` |
-| 2 | `PushSample(EegSample)` × N | jedan red CSV-a sa svim poljima + RowIndex | `Ack{ Status=IN_PROGRESS }` ili `FaultException` |
-| 3 | `EndSession()` | bez parametara | `Ack{ Status=COMPLETED }` |
 
-Sve greške validacije se vraćaju kao `FaultException<ValidationFault>` ili `FaultException<DataFormatFault>`.  
-Klijent ih beleži u `logs/client_rejects_*.csv`, ali nastavlja sa sledećim redom — ne prekida sesiju.
+### Vizuelna skica arhitekture
 
----
+![Skica projekta – EEG WCF](docs/skica_projekta_eeg_wcf.png)
 
-## Struktura projekta
+## 2. Gdje su StartSession, PushSample i EndSession?
 
-```
-EegWcfSystem.sln
-├── EegWcfSystem.Common     (Class Library .NET 4.8)
-│     ├── Contracts/IEegService.cs
-│     ├── Contracts/EegMeta.cs
-│     ├── Contracts/EegSample.cs
-│     ├── Contracts/AckResponse.cs
-│     ├── Contracts/SessionStatus.cs
-│     └── Faults/EegFaults.cs
-├── EegWcfSystem.Server     (Console App .NET 4.8)
-│     ├── Services/EegService.cs
-│     ├── Storage/SessionWriter.cs   (skelet za CP2)
-│     ├── Program.cs
-│     └── App.config
-└── EegWcfSystem.Client     (Console App .NET 4.8)
-      ├── IO/EegCsvReader.cs
-      ├── IO/RejectLogger.cs
-      ├── Program.cs
-      └── App.config
+Definicija ugovora:
+
+```text
+EegWcfSystem.Common/Contracts/IEegService.cs
 ```
 
----
+Klijent ih poziva ovdje:
 
-## Pragovi validacije (App.config — Server)
+```text
+EegWcfSystem.Client/Program.cs
+```
 
-| Ključ | Podrazumevano | Opis |
-|-------|--------------|------|
-| `BatteryLowThreshold` | 20 | Upozorenje za nizak bateriju (CP2 event) |
-| `ContactQualityMin` | 50 | Minimalni prihvatljivi ContactQuality (CP2 event) |
-| `ExcitementSpikeThreshold` | 0.30 | Delta Excitement za spike alarm (CP2) |
-| `ChannelMinValue` | 0 | Minimalna vrednost EEG kanala |
-| `ChannelMaxValue` | 10000 | Maksimalna vrednost EEG kanala |
-| `TimestampSkewMaxMs` | 2000 | Maksimalni dozvoljeni skew timestampa (CP2) |
+Server ih implementira ovdje:
 
+```text
+EegWcfSystem.Server/Services/EegService.cs
+```
+
+Najbitnija metoda za slanje podataka je:
+
+```csharp
+proxy.PushSample(sample);
+```
+
+To je mjesto gdje se jedan parsirani CSV red šalje sa klijenta na WCF servis.
+
+## 3. Pokretanje
+
+1. Otvori `EegWcfSystem.sln` u Visual Studio.
+2. Uradi `Build -> Clean Solution`.
+3. Uradi `Build -> Rebuild Solution`.
+4. Prvo pokreni `EegWcfSystem.Server`.
+5. Zatim pokreni `EegWcfSystem.Client`.
+
+Sigurniji način je ručno: prvo server konzola, pa klijent konzola.
+
+## 4. Šta se generiše?
+
+Na serveru se generiše:
+
+```text
+EegWcfSystem.Server/bin/Debug/Data/<ParticipantId>/<YYYY-MM-DD>/session.csv
+EegWcfSystem.Server/bin/Debug/Data/<ParticipantId>/<YYYY-MM-DD>/rejects.csv
+```
+
+Na klijentu se generiše:
+
+```text
+EegWcfSystem.Client/bin/Debug/logs/client_rejects_*.csv
+EegWcfSystem.Client/bin/Debug/logs/send_times_subject_*.csv
+```
+
+## 5. Pokrivenost PDF zadataka
+
+| Zadatak | Implementacija |
+|---|---|
+| 1. Skica sistema i protokol | `README.md`, `ARHITEKTURA_I_PROTOKOL.md`, `IEegService.cs` |
+| 2. WCF servis, ugovori, konfiguracija | `IEegService.cs`, `EegMeta.cs`, `EegSample.cs`, oba `App.config` fajla |
+| 3. Validacija i fault izuzeci | `EegService.cs`, `EegFaults.cs` |
+| 4. Dispose pattern | `EegCsvReader.cs`, `RejectLogger.cs`, `SendTimeLogger.cs`, `SessionWriter.cs`, `EegService.cs` |
+| 5. CSV učitavanje | `EegCsvReader.cs`, `Program.cs`, folder `EEG/` |
+| 6. session.csv i rejects.csv | `SessionWriter.cs` |
+| 7. Sekvencijalni prenos i log vremena slanja | `Program.cs`, `SendTimeLogger.cs` |
+| 8. Delegati i događaji | `EegService.cs` (`OnTransferStarted`, `OnSampleReceived`, `OnTransferCompleted`, `OnWarningRaised`) |
+| 9. ΔExcitement i ΔInterest | `EegService.cs`, metoda `AnalyzeWarnings` |
+| 10. Baterija, kontakt, saturacija kanala | `EegService.cs`, metoda `AnalyzeWarnings` |
+
+## 6. EEG baza podataka
+
+U projekat je ubačena stvarna baza iz fajla `EEG.rar` koji je poslat naknadno. U toj arhivi se nalazi 20 CSV fajlova:
+
+```text
+EegWcfSystem.Client/EEG/subject_1_results.csv
+...
+EegWcfSystem.Client/EEG/subject_20_results.csv
+```
+
+Ukupno ima 874411 redova podataka bez header-a. Kod ne zavisi od fiksnog broja fajlova, već rekurzivno obrađuje sve fajlove oblika `subject_*_results.csv` koje nađe u `EEG/` direktorijumu.
+
+Napomena: PDF u tekstu zadatka pominje 30 fajlova, ali poslata `EEG.rar` arhiva sadrži 20 fajlova. Nisam izmišljao dodatnih 10 fajlova; ako asistent/profesor insistira na svih 30 originalnih CSV fajlova, potrebno je samo dodati nedostajuće `subject_21_results.csv` do `subject_30_results.csv` u isti `EEG/` folder.
+
+## 7. Simulacija prekida veze
+
+U `EegWcfSystem.Client/App.config` postoji:
+
+```xml
+<add key="SimulateBreakAfterRows" value="0" />
+```
+
+Za normalan rad ostaje `0`. Za demonstraciju prekida veze možeš staviti npr. `10`; klijent će prekinuti poslije 10 poslatih redova, a `finally` blok i `Dispose` će zatvoriti reader/log resurse.
